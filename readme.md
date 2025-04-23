@@ -38,13 +38,13 @@ A self-contained web app demonstrating secure, end-to-end encryption for Ethereu
    - The sender’s ephemeral public key `epk` is prepended to the nonce and ciphertext to form the **envelope** for each recipient.  
    - Recipients recover `K` via `X25519(sk_rec, epk)`, then decrypt the body cipher.
 
-
 <p align="center">
   <a href="https://www.youtube.com/watch?v=F3zzNa42-tQ">
     <img src="https://img.youtube.com/vi/F3zzNa42-tQ/0.jpg" alt="▶ Watch the video">
   </a>
+  <br>
+  <a href="https://www.youtube.com/watch?v=F3zzNa42-tQ">Click to view on YouTube</a>
 </p>
-
 ---
 
 ## Keypair Generation & Recovery
