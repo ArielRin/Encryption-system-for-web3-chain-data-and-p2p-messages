@@ -39,7 +39,12 @@ A self-contained web app demonstrating secure, end-to-end encryption for Ethereu
    - Recipients recover `K` via `X25519(sk_rec, epk)`, then decrypt the body cipher.
 
 
-[![Watch the video](https://img.youtube.com/vi/F3zzNa42-tQ/0.jpg)](https://www.youtube.com/watch?v=F3zzNa42-tQ)
+<p align="center">
+  <a href="https://www.youtube.com/watch?v=F3zzNa42-tQ">
+    <img src="https://img.youtube.com/vi/F3zzNa42-tQ/0.jpg" alt="▶ Watch the video">
+  </a>
+</p>
+
 ---
 
 ## Keypair Generation & Recovery
