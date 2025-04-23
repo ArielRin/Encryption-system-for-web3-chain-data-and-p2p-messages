@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>🔐 Offline Hybrid Encryption Demo</title>
+  <style>
+    body { font-family: sans-serif; max-width:800px; margin:auto; padding:2rem }
+    h1 { margin-top:0 }
+    button { margin:.5rem .5rem .5rem 0 }
+    label { display:block; margin-top:1rem }
+    textarea, select, pre { width:100%; box-sizing:border-box; margin-top:.5rem }
+    textarea, select { min-height:2.5em }
+    pre { background:#f4f4f4; padding:.75rem; white-space:pre-wrap }
+    ul { padding-left:1.2em }
+  </style>
+</head>
+<body>
+  <h1>🔐 Offline Hybrid Encryption Demo</h1>
+
+  <h2>1) Load / Paste My Keypair</h2>
+  <button id="btnLoadKey">Import Keypair from File</button>
+  <button id="btnSaveKey" disabled>Save Keypair to File</button>
+  <label>Public Key (Base64):</label>
+  <textarea id="pubKey" placeholder="Paste or load your public key here"></textarea>
+  <label>Secret Key (Base64):</label>
+  <textarea id="secKey" placeholder="Paste or load your secret key here"></textarea>
+
+  <h2>2) Add Recipients</h2>
+  <label>Recipient Public Key (Base64):</label>
+  <textarea id="recipKey" placeholder="Paste a recipient’s public key"></textarea>
+  <button id="btnAddRecip">Add Recipient</button>
+  <ul id="recipList"></ul>
+
+  <h2>3) Encrypt</h2>
+  <label>Plaintext:</label>
+  <textarea id="plain" placeholder="Type your message…"></textarea>
+  <button id="btnEncrypt">Encrypt ▶️</button>
+  <label>Encrypted Envelopes (JSON):</label>
+  <pre id="outEnvs">(none yet)</pre>
+
+  <h2>4) Decrypt</h2>
+  <label>Paste Envelopes JSON here:</label>
+  <textarea id="inEnvs" placeholder='{"BASE64_PUB": "BASE64_ENV", …}'></textarea>
+  <button id="btnDecrypt">Decrypt ▶️</button>
+  <label>Decrypted Plaintext:</label>
+  <pre id="outPlain">(none yet)</pre>
+
+  <h2>5) Debug Log</h2>
+  <pre id="log"></pre>
+
+  <script src="https://cdn.jsdelivr.net/npm/tweetnacl@1.0.3/nacl.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/tweetnacl-util@0.15.1/dist/tweetnacl-util.min.js"></script>
+  <script>
+    const L = (...args) => {
+      console.log(...args);
+      document.getElementById('log').textContent += args.join(' ') + "\n";
+    };
+    const b64enc = u8 => btoa(String.fromCharCode(...u8));
+    const b64dec = b => {
+      const bin = atob(b), a = new Uint8Array(bin.length);
+      for (let i=0;i<bin.length;i++) a[i]=bin.charCodeAt(i);
+      return a;
+    };
+    const utf8enc = s => new TextEncoder().encode(s);
+    const utf8dec = u8 => new TextDecoder().decode(u8);
+
+    const btnLoadKey  = document.getElementById('btnLoadKey'),
+          btnSaveKey  = document.getElementById('btnSaveKey'),
+          pubKeyTA    = document.getElementById('pubKey'),
+          secKeyTA    = document.getElementById('secKey'),
+          btnAddRecip = document.getElementById('btnAddRecip'),
+          recipKeyTA  = document.getElementById('recipKey'),
+          recipList   = document.getElementById('recipList'),
+          btnEncrypt  = document.getElementById('btnEncrypt'),
+          plainTA     = document.getElementById('plain'),
+          outEnvs     = document.getElementById('outEnvs'),
+          btnDecrypt  = document.getElementById('btnDecrypt'),
+          inEnvsTA    = document.getElementById('inEnvs'),
+          outPlain    = document.getElementById('outPlain'),
+          fileInput   = (() => { const inp = document.createElement('input'); inp.type='file'; inp.accept='application/json'; inp.style.display='none'; document.body.append(inp); return inp; })();
+
+    let keypair = null;
+    const recipients = [];
+
+    btnLoadKey.onclick = () => fileInput.click();
+    fileInput.onchange = async e => {
+      try {
+        const file = e.target.files[0];
+        if (!file) return;
+        const txt  = await file.text();
+        const obj  = JSON.parse(txt);
+        if (!obj.pub || !obj.sec) throw 'Invalid key file';
+        pubKeyTA.value = obj.pub;
+        secKeyTA.value = obj.sec;
+        keypair = {
+          publicKey: b64dec(obj.pub),
+          secretKey: b64dec(obj.sec)
+        };
+        btnSaveKey.disabled = false;
+        L('Keypair loaded');
+      } catch(err) {
+        L('Error loading keypair:', err);
+      } finally {
+        fileInput.value = '';
+      }
+    };
+
+    btnSaveKey.onclick = () => {
+      try {
+        if (!keypair) throw 'No keypair to save';
+        const data = JSON.stringify({
+          pub: pubKeyTA.value.trim(),
+          sec: secKeyTA.value.trim()
+        },null,2);
+        const blob = new Blob([data],{type:'application/json'});
+        const url  = URL.createObjectURL(blob);
+        const a    = document.createElement('a');
+        a.href     = url;
+        a.download = 'enc-keypair.json';
+        document.body.append(a);
+        a.click(); a.remove();
+        URL.revokeObjectURL(url);
+        L('Keypair saved to file');
+      } catch(err) {
+        L('Error saving keypair:', err);
+      }
+    };
+
+    btnAddRecip.onclick = () => {
+      const b64 = recipKeyTA.value.trim();
+      try {
+        const pub = b64dec(b64);
+        if (pub.length !== nacl.box.publicKeyLength) throw 'Bad key length';
+        recipients.push(b64);
+        const li = document.createElement('li');
+        li.textContent = b64;
+        recipList.append(li);
+        recipKeyTA.value = '';
+        L('Recipient added');
+      } catch(err) {
+        L('Bad recipient key:', err);
+      }
+    };
+
+    btnEncrypt.onclick = () => {
+      try {
+        if (!pubKeyTA.value || !secKeyTA.value) throw 'Load your keypair first';
+        if (!plainTA.value.trim()) throw 'Enter plaintext';
+        if (recipients.length === 0) throw 'Add at least one recipient';
+        const myPubB64 = pubKeyTA.value.trim();
+        const mySec    = b64dec(secKeyTA.value.trim());
+        const envelopes = {};
+        const msgBytes = utf8enc(plainTA.value.trim());
+        recipients.concat([myPubB64]).forEach(b64 => {
+          const theirPub = b64dec(b64);
+          const eph      = nacl.box.keyPair();
+          const nonce    = nacl.randomBytes(nacl.box.nonceLength);
+          const ct       = nacl.box(msgBytes, nonce, theirPub, eph.secretKey);
+          const blob     = new Uint8Array(eph.publicKey.length + nonce.length + ct.length);
+          blob.set(eph.publicKey,0);
+          blob.set(nonce,eph.publicKey.length);
+          blob.set(ct, eph.publicKey.length + nonce.length);
+          envelopes[b64] = b64enc(blob);
+        });
+        outEnvs.textContent = JSON.stringify(envelopes,null,2);
+        btnDecrypt.disabled = false;
+        L('Encryption complete');
+      } catch(err) {
+        L('Error encrypting:', err);
+      }
+    };
+
+    btnDecrypt.onclick = () => {
+      try {
+        if (!pubKeyTA.value || !secKeyTA.value) throw 'Load your keypair first';
+        const obj = JSON.parse(inEnvsTA.value);
+        const myPub = pubKeyTA.value.trim();
+        const blobB64 = obj[myPub];
+        if (!blobB64) throw 'No envelope for your public key';
+        const blob  = b64dec(blobB64),
+              pkLen = nacl.box.publicKeyLength,
+              nLen  = nacl.box.nonceLength;
+        const ephPub = blob.slice(0,pkLen),
+              nonce  = blob.slice(pkLen, pkLen+nLen),
+              ct     = blob.slice(pkLen+nLen);
+        const ptArr = nacl.box.open(ct, nonce, ephPub, b64dec(secKeyTA.value.trim()));
+        if (!ptArr) throw 'Decryption failed';
+        outPlain.textContent = utf8dec(ptArr);
+        L('Decryption successful');
+      } catch(err) {
+        L('Error decrypting:', err);
+      }
+    };
+  </script>
+</body>
+</html>
