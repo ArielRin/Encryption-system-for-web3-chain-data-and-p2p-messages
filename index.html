@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>🔐 Hybrid Encryption Demo</title>
+<style>
+  body { font-family: sans-serif; max-width:800px; margin:auto; padding:2rem }
+  h1 { margin-top:0 }
+  button { margin:.5rem .5rem .5rem 0 }
+  label { display:block; margin-top:1rem }
+  textarea, select, pre { width:100%; box-sizing:border-box; margin-top:.5rem }
+  textarea, select { min-height:2.5em }
+  pre { background:#f4f4f4; padding:.75rem; white-space:pre-wrap }
+</style>
+</head>
+<body>
+  <h1>🔐 Hybrid Encryption Demo</h1>
+
+  <h2>🔗 Connect Wallet</h2>
+  <button id="btnConnect">Connect Wallet</button>
+  <pre id="meAddr">(no wallet)</pre>
+
+  <h2>🗝️ My Encryption Keypair</h2>
+  <button id="btnLoad" disabled>Load Existing Keypair</button>
+  <button id="btnGen" disabled>Generate New Keypair</button>
+  <button id="btnCopyPub" disabled>Copy Public Key</button>
+  <button id="btnShowSec" disabled>Show Secret Key</button>
+  <button id="btnCopySec" disabled>Copy Secret Key</button>
+  <button id="btnSaveFile" disabled>Save Keypair to File</button>
+  <button id="btnLoadFile">Import Keypair from File</button>
+  <input type="file" id="fileInput" accept="application/json" style="display:none" />
+
+  <label>Signature over Public Key:</label>
+  <pre id="sigOfPub"></pre>
+
+  <label>Public Key (Base64):</label>
+  <textarea id="pubKey" readonly placeholder="(not loaded)"></textarea>
+
+  <label>Secret Key (Base64):</label>
+  <textarea id="secKey" readonly style="display:none"></textarea>
+
+  <h2>⛓️ Register / Update On-Chain</h2>
+  <button id="btnRegister" disabled>Register / Update PubKey</button>
+
+  <h2>✉️ Encrypt a Message</h2>
+  <label>Plaintext:</label>
+  <textarea id="plain" placeholder="Type your message…"></textarea>
+  <label>Recipients (Ctrl/⌘-click; always includes you):</label>
+  <select id="selRecips" multiple size="5"></select>
+  <button id="btnEncrypt" disabled>Encrypt ▶️</button>
+  <label>Encrypted Envelopes (JSON):</label>
+  <pre id="outEnvs"></pre>
+
+  <h2>🔓 Decrypt a Message</h2>
+  <label>Paste Envelopes JSON here:</label>
+  <textarea id="inEnvs" placeholder='{"0xabc…": "base64…", …}'></textarea>
+  <button id="btnDecrypt" disabled>Decrypt ▶️</button>
+  <label>Decrypted Plaintext:</label>
+  <pre id="outPlain"></pre>
+
+  <script src="https://cdn.jsdelivr.net/npm/ethers@6.13.5/dist/ethers.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/tweetnacl@1.0.3/nacl.min.js"></script>
+  <script>
+    const b64enc = u=>btoa(String.fromCharCode(...u));
+    const b64dec = s=>{const b=atob(s),a=new Uint8Array(b.length);for(let i=0;i<b.length;i++)a[i]=b.charCodeAt(i);return a};
+    const utf8enc = s=>new TextEncoder().encode(s);
+    const utf8dec = u=>new TextDecoder().decode(u);
+
+    let me,provider,signer,notesC,registry={},keypair;
+
+    const NOTES_ADDRESS='0xaf232CdEdFE151e4141f2E782B9B54DbEfFd2eDe',
+          NOTES_ABI=["function isPublicKeyRegistered(address) view returns (bool)","function registerUserPublicKey(string) external","function getUserPublicKey(address) view returns (string)","event UserPublicKeyRegistered(address indexed user)"],
+          TARGET_CHAIN_ID='0xdede';
+
+    const btnConnect  =document.getElementById('btnConnect'),
+          meAddrDisp  =document.getElementById('meAddr'),
+          btnLoad     =document.getElementById('btnLoad'),
+          btnGen      =document.getElementById('btnGen'),
+          btnCopyPub  =document.getElementById('btnCopyPub'),
+          btnShowSec  =document.getElementById('btnShowSec'),
+          btnCopySec  =document.getElementById('btnCopySec'),
+          btnSaveFile =document.getElementById('btnSaveFile'),
+          btnLoadFile =document.getElementById('btnLoadFile'),
+          fileInput   =document.getElementById('fileInput'),
+          sigOfPub    =document.getElementById('sigOfPub'),
+          pubKeyTA    =document.getElementById('pubKey'),
+          secKeyTA    =document.getElementById('secKey'),
+          btnRegister =document.getElementById('btnRegister'),
+          selRecips   =document.getElementById('selRecips'),
+          btnEncrypt  =document.getElementById('btnEncrypt'),
+          plainTA     =document.getElementById('plain'),
+          outEnvs     =document.getElementById('outEnvs'),
+          inEnvs      =document.getElementById('inEnvs'),
+          btnDecrypt  =document.getElementById('btnDecrypt'),
+          outPlain    =document.getElementById('outPlain');
+
+    function saveKey(){ localStorage.setItem(`enc_kp__${me}`,JSON.stringify({pub:b64enc(keypair.publicKey),sec:b64enc(keypair.secretKey),sig:keypair.sig})); }
+    function loadKey(){const j=localStorage.getItem(`enc_kp__${me}`);return j?JSON.parse(j):null}
+
+    btnConnect.onclick=async()=>{
+      if(!window.ethereum)return;
+      await ethereum.request({method:'eth_requestAccounts'});
+      provider=new ethers.BrowserProvider(ethereum);
+      signer=await provider.getSigner();
+      me=(await signer.getAddress()).toLowerCase();
+      meAddrDisp.textContent=`You: ${me}`;
+      let cid=(await ethereum.request({method:'eth_chainId'})).toLowerCase();
+      if(cid!==TARGET_CHAIN_ID)await ethereum.request({method:'wallet_switchEthereumChain',params:[{chainId:TARGET_CHAIN_ID}]});
+      notesC=new ethers.Contract(NOTES_ADDRESS,NOTES_ABI,signer);
+      const evts=await notesC.queryFilter(notesC.filters.UserPublicKeyRegistered(),0,'latest');
+      registry={};evts.forEach(e=>registry[e.args.user.toLowerCase()]=null);
+      await Promise.all(Object.keys(registry).map(async a=>registry[a]=await notesC.getUserPublicKey(a)));
+      selRecips.innerHTML='';Object.keys(registry).forEach(a=>{const o=document.createElement('option');o.value=a;o.textContent=a;selRecips.append(o)});
+      btnLoad.disabled=btnGen.disabled=btnRegister.disabled=false;
+    };
+
+    btnLoad.onclick=()=>{
+      const o=loadKey();if(!o)return;
+      keypair={publicKey:b64dec(o.pub),secretKey:b64dec(o.sec),sig:o.sig};
+      sigOfPub.textContent=`Signature:\n${o.sig}`;
+      pubKeyTA.value=o.pub;
+      secKeyTA.value=o.sec;
+      btnCopyPub.disabled=btnShowSec.disabled=btnCopySec.disabled=btnSaveFile.disabled=btnEncrypt.disabled=btnDecrypt.disabled=false;
+    };
+
+    btnGen.onclick=async()=>{
+      const existing=loadKey();
+      if(existing&&!confirm('Overwrite existing keypair?'))return;
+      const kp=nacl.box.keyPair(),pub=b64enc(kp.publicKey);
+      const sig=await signer.signMessage(`Register encryption key: ${pub}`);
+      keypair={publicKey:kp.publicKey,secretKey:kp.secretKey,sig};
+      saveKey();
+      sigOfPub.textContent=`Signature:\n${sig}`;
+      pubKeyTA.value=pub;
+      secKeyTA.value=b64enc(kp.secretKey);
+      btnCopyPub.disabled=btnShowSec.disabled=btnCopySec.disabled=btnSaveFile.disabled=btnEncrypt.disabled=btnDecrypt.disabled=false;
+    };
+
+    btnCopyPub.onclick=()=>{pubKeyTA.select();document.execCommand('copy')};
+
+    btnShowSec.onclick=()=>{
+      if(secKeyTA.style.display==='none'){
+        secKeyTA.style.display='block';btnShowSec.textContent='Hide Secret Key';
+      } else {
+        secKeyTA.style.display='none';btnShowSec.textContent='Show Secret Key';
+      }
+    };
+
+    btnCopySec.onclick=()=>{secKeyTA.select();document.execCommand('copy')};
+
+    btnSaveFile.onclick=()=>{
+      const j=localStorage.getItem(`enc_kp__${me}`);if(!j)return;
+      const blob=new Blob([j],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');
+      a.href=url;a.download=`${me}-enc-key.json`;document.body.append(a);a.click();a.remove();URL.revokeObjectURL(url);
+    };
+
+    btnLoadFile.onclick=()=>fileInput.click();
+    fileInput.onchange=async e=>{
+      const f=e.target.files[0];if(!f)return;
+      const t=await f.text(),obj=JSON.parse(t);
+      if(!obj[me])return;
+      localStorage.setItem(`enc_kp__${me}`,JSON.stringify(obj[me]));
+      btnLoad.click();
+      fileInput.value='';
+    };
+
+    btnRegister.onclick=async()=>{
+      const b=b64enc(keypair.publicKey),tx=await notesC.registerUserPublicKey(b);
+      await tx.wait();
+      registry[me]=b;
+      selRecips.innerHTML='';Object.keys(registry).forEach(a=>{const o=document.createElement('option');o.value=a;o.textContent=a;selRecips.append(o)});
+    };
+
+    btnEncrypt.onclick=()=>{
+      const msg=plainTA.value.trim();
+      if(!msg)return;
+      let chosen=Array.from(selRecips.selectedOptions).map(o=>o.value);
+      if(!chosen.includes(me))chosen.push(me);
+      const pkLen=nacl.box.publicKeyLength,nLen=nacl.box.nonceLength,out={};
+      chosen.forEach(addr=>{
+        const b64=registry[addr];if(!b64)return;
+        const their=b64dec(b64),eph=nacl.box.keyPair(),nonce=nacl.randomBytes(nLen),
+              ct=nacl.box(utf8enc(msg),nonce,their,eph.secretKey),
+              blob=new Uint8Array(pkLen+nLen+ct.length);
+        blob.set(eph.publicKey,0);blob.set(nonce,pkLen);blob.set(ct,pkLen+nLen);
+        out[addr]=b64enc(blob);
+      });
+      outEnvs.textContent=JSON.stringify(out,null,2);
+      btnDecrypt.disabled=false;
+    };
+
+    btnDecrypt.onclick=()=>{
+      const obj=JSON.parse(inEnvs.value||'{}'),blobB64=obj[me];if(!blobB64)return;
+      const blob=b64dec(blobB64),pkLen=nacl.box.publicKeyLength,nLen=nacl.box.nonceLength,
+            ephPub=blob.slice(0,pkLen),nonce=blob.slice(pkLen,pkLen+nLen),ct=blob.slice(pkLen+nLen);
+      const ptArr=nacl.box.open(ct,nonce,ephPub,keypair.secretKey);
+      if(!ptArr)return;
+      outPlain.textContent=utf8dec(ptArr);
+    };
+  </script>
+</body>
+</html>
