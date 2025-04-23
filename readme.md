@@ -1,4 +1,4 @@
-# 🔐 Hybrid On-Chain Encryption Demo
+# 🔐 Hybrid On-Chain Encryption
 
 A self-contained web app demonstrating secure, end-to-end encryption for Ethereum wallets using X25519 keypairs, on-chain public-key registration, and off-chain message envelopes. This document provides a deep dive into the underlying algorithms, key management strategies, feature set, usage patterns, and security considerations.
 
